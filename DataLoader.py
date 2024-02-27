@@ -1,6 +1,4 @@
-import pandas as pd
 from ltp import LTP
-import re
 from transformers import BertTokenizer
 import json
 import torch
@@ -12,18 +10,27 @@ def read_process_data():
     with open('./process_data/same_data.json', 'r', encoding='utf-8') as f:
         data = json.load(f)
         f.close()
+        x = []
+        for key in data:
+            x.append([key]+data[key])
+        # 去除语句中的空格和方面中的空格
+        for i in range(len(x)):
+            x[i][0] = x[i][0].replace(' ', '')
+            for j in range(2, len(x[i]), 3):
+                x[i][j] = x[i][j].replace(' ', '')
+        data = {}
+        for i in range(len(x)):
+            data[x[i][0]] = x[i][1:]
     return data
 
 
-def find_index(text, aspect, all_num, not_found_aspect):
+def find_index(text, aspect):
     if aspect in text:
         a = [text.index(aspect)]
         for i in range(len(aspect) - 1):
             a.append(a[i] + 1)
         return a
     else:
-        not_found_aspect[text] = [aspect]
-        all_num += 1
         a = []
         for i in range(len(aspect)):
             if aspect[i] in text:
@@ -48,11 +55,12 @@ def get_matrix_data_ltp(data):
     y_entity = []
     y_sentiment = []
     all_sentiment = []
-    all_num = 0
-    not_found_aspect = {}
     for key in data:
         # 获取节点特征
         node_feature.append(tokenizer.encode_plus(key, add_special_tokens=False)['input_ids'])
+        if len(node_feature[-1]) != len(key):
+            # 完善节点特征，没有的特征值用0完善
+            node_feature[-1] += [0] * (len(key) - len(node_feature[-1]))
         # 获取batch（批次）
         batch.append([0] * len(key))
         # 读取数据
@@ -64,18 +72,24 @@ def get_matrix_data_ltp(data):
         # 创建边索引值
         edge = [[], []]
         for i in range(len(sdpg)):
-            for j in range(len(text[i])):
-                for z in range(text[sdpg[i][1] - 1]):
+            for j in range(len(text[sdpg[i][0]-1])):
+                if sdpg[i][1] == 0:
+                    break
+                for z in range(len(text[sdpg[i][1] - 1])):
                     # 根据LTP的依存句法分析树，获取边索引值
-                    edge[0].append(key.index(text[i]) + j)
-                    edge[1].append(key.index(text[sdpg[i][1] - 1]) + z)
+                    edge[0].append(key.index(text[sdpg[i][0]-1]) + j)
+                    edge[1].append(key.index(text[sdpg[i][1]-1]) + z)
         edge_index.append(edge)
         # 整体情感标记
         all_sentiment.append([data[key][0]])
-        # 获取实体标记
+        # 获取实体标记和情感标记，-2到2把它变成0到4
         entity = [0] * len(key)
+        sentiment = [5] * len(key)
         for i in range(1, len(data[key]), 3):
             index = find_index(key, data[key][i])
             for j in index:
                 entity[j] = 1
+                sentiment[j] = int(data[key][i + 2]) + 2
+        y_entity.append(entity)
+        y_sentiment.append(sentiment)
     return node_feature, edge_index, batch, y_entity, y_sentiment

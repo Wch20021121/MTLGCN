@@ -30,10 +30,10 @@ class MultitaskGCN(nn.Module):
         sentiment_output = self.sentiment_classifier(x)
 
         # 输出整体句子的情感
-        sentiment_entity_output = global_mean_pool(sentiment_output, data.batch)
+        all_output = global_mean_pool(sentiment_output, data.batch)
 
         # 只保留实体节点的情感输出
         entity_mask = torch.argmax(entity_output, dim=1) == 1  # 假设实体类别为1
         sentiment_output = sentiment_output[entity_mask]
 
-        return F.log_softmax(entity_output, dim=1), F.log_softmax(sentiment_output, dim=1), F.log_softmax(sentiment_entity_output, dim=1)
+        return F.log_softmax(entity_output, dim=1), F.log_softmax(sentiment_output, dim=1), F.log_softmax(all_output, dim=1)
