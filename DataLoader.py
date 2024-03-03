@@ -12,7 +12,7 @@ def read_process_data():
         f.close()
         x = []
         for key in data:
-            x.append([key]+data[key])
+            x.append([key] + data[key])
         # 去除语句中的空格和方面中的空格
         for i in range(len(x)):
             x[i][0] = x[i][0].replace(' ', '')
@@ -57,10 +57,14 @@ def get_matrix_data_ltp(data):
     all_sentiment = []
     for key in data:
         # 获取节点特征
-        node_feature.append(tokenizer.encode_plus(key, add_special_tokens=False)['input_ids'])
-        if len(node_feature[-1]) != len(key):
+        node_feature_i = []
+        bert_token = tokenizer.encode_plus(key, add_special_tokens=False)['input_ids']
+        for i in bert_token:
+            node_feature_i.append([i])
+        if len(node_feature_i) != len(key):
             # 完善节点特征，没有的特征值用0完善
-            node_feature[-1] += [0] * (len(key) - len(node_feature[-1]))
+            node_feature_i += [[0]] * (len(key) - len(node_feature[-1]))
+        node_feature.append(node_feature_i)
         # 获取batch（批次）
         batch.append([0] * len(key))
         # 读取数据
@@ -72,16 +76,20 @@ def get_matrix_data_ltp(data):
         # 创建边索引值
         edge = [[], []]
         for i in range(len(sdpg)):
-            for j in range(len(text[sdpg[i][0]-1])):
+            for j in range(len(text[sdpg[i][0] - 1])):
                 if sdpg[i][1] == 0:
                     break
                 for z in range(len(text[sdpg[i][1] - 1])):
                     # 根据LTP的依存句法分析树，获取边索引值
-                    edge[0].append(key.index(text[sdpg[i][0]-1]) + j)
-                    edge[1].append(key.index(text[sdpg[i][1]-1]) + z)
+                    edge[0].append(key.index(text[sdpg[i][0] - 1]) + j)
+                    edge[1].append(key.index(text[sdpg[i][1] - 1]) + z)
         edge_index.append(edge)
         # 整体情感标记
-        all_sentiment.append([data[key][0]])
+        # -1的情感标记变成0
+        if int(data[key][0]) == -1:
+            all_sentiment.append([data[key][0] + 1])
+        else:
+            all_sentiment.append([data[key][0]])
         # 获取实体标记和情感标记，-2到2把它变成0到4
         entity = [0] * len(key)
         sentiment = [5] * len(key)
@@ -92,4 +100,12 @@ def get_matrix_data_ltp(data):
                 sentiment[j] = int(data[key][i + 2]) + 2
         y_entity.append(entity)
         y_sentiment.append(sentiment)
-    return node_feature, edge_index, batch, y_entity, y_sentiment
+    return node_feature, edge_index, batch, y_entity, y_sentiment, all_sentiment
+
+
+if __name__ == '__main__':
+    data = read_process_data()
+    print("================================正在处理数据================================")
+    node_feature, edge_index, batch, y_entity, y_sentiment, all_sentiment = get_matrix_data_ltp(data)
+    print("================================数据处理完成================================")
+
