@@ -1,25 +1,23 @@
-import torch
 from torch.nn import CrossEntropyLoss
-from MTLGCN import MultitaskGCN
-import json
-from DataSets import MyDataSet
-import random
-from tqdm import tqdm
+from base_model import MultitaskGAT, MultitaskGCN
+from DataSets_bblg import MyDataSet
 from torch.optim.lr_scheduler import OneCycleLR
-import logging
 from DataProcess import *
 from transformers import BertModel
-from torch_geometric.data import Data
 import warnings
 from torch.optim import AdamW
+from config import *
 
 
 # noinspection PyShadowingNames
 def train_model(train_dataloader, tags_size, num_sentiment_classes, all_sentiment_classes,
-                num_epochs, learning_rate, device, weights, p0, accumulation_steps, bert_model, hidden_dim,
-                sentiment_loss_weight, all_sentiment_loss_weight):
+                num_epochs, learning_rate, device, weight, p0, accumulation_steps, bert_model, hidden_dim,
+                sentiment_loss_weight, all_sentiment_loss_weight, model_type):
     # 初始化模型和优化器
-    model = MultitaskGCN(tags_size, num_sentiment_classes, all_sentiment_classes, p0, bert_model, hidden_dim)
+    if model_type == 'GCN':
+        model = MultitaskGCN(tags_size, num_sentiment_classes, all_sentiment_classes, p0, bert_model, hidden_dim)
+    else:
+        model = MultitaskGAT(tags_size, num_sentiment_classes, all_sentiment_classes, p0, bert_model, hidden_dim)
     # 定义优化器AdamW
     optimizer = AdamW(model.parameters(), lr=learning_rate)
     # 定义学习率调度器
@@ -43,7 +41,7 @@ def train_model(train_dataloader, tags_size, num_sentiment_classes, all_sentimen
     logging.info(
         "参数:weight:{},p:{},lr:{},累积步数:{},情感loss权重:{},总情感loss权重:{}"
         .format(
-            weights,
+            weight,
             p0,
             learning_rate,
             accumulation_steps,
@@ -91,7 +89,7 @@ def train_model(train_dataloader, tags_size, num_sentiment_classes, all_sentimen
             # 计算整体句子情感预测的loss
             all_loss = criterion_all(all_output, data.all_sentiment)
             # 按权重返回总的loss
-            loss = weights[0] * entity_loss + weights[1] * sentiment_loss + weights[2] * all_loss
+            loss = weight[0] * entity_loss + weight[1] * sentiment_loss + weight[2] * all_loss
 
             loss.backward()  # 反向传播
             if (i + 1) % accumulation_steps == 0:
@@ -140,12 +138,12 @@ def test_model(test_dataloader, model, device):
 
 # noinspection PyShadowingNames
 def train_test_model(train_dataloader, tags_size, num_sentiment_classes, all_sentiment_classes,
-                     num_epochs, learning_rate, device, weights, p0, accumulation_steps, bert_model, hidden_dim,
-                     sentiment_loss_weight, all_sentiment_loss_weight, test_dataloader):
+                     num_epochs, learning_rate, device, weight, p0, accumulation_steps, bert_model, hidden_dim,
+                     sentiment_loss_weight, all_sentiment_loss_weight, test_dataloader, model_type):
     # 训练模型
     model = train_model(train_dataloader, tags_size, num_sentiment_classes, all_sentiment_classes,
-                        num_epochs, learning_rate, device, weights, p0, accumulation_steps, bert_model, hidden_dim,
-                        sentiment_loss_weight, all_sentiment_loss_weight)
+                        num_epochs, learning_rate, device, weight, p0, accumulation_steps, bert_model, hidden_dim,
+                        sentiment_loss_weight, all_sentiment_loss_weight, model_type)
 
     logging.info("开始测试模型:")
 
@@ -159,62 +157,75 @@ def train_test_model(train_dataloader, tags_size, num_sentiment_classes, all_sen
 # noinspection PyShadowingNames
 
 
-def read_data(catalog):
-    global train_data, test_data
+def read_data(catalog, is_bio, bert_path, ltp_path, train_data_path, test_data_path):
 
     logging.info("读取数据")
     # 读取数据
-    train_org_data = read_process_data('train_data.json')
-    test_org_data = read_process_data('test_data.json')
-    if catalog == 'ltp':
+    train_org_data = read_process_data(train_data_path)
+    test_org_data = read_process_data(test_data_path)
+    if is_bio:
+        logging.info("正在使用BIO标注:")
         # 获取训练数据
-        logging.info("正在使用ltp获取训练数据:")
-        bert_input, edge_index, batch, y_entity, y_sentiment, all_sentiment, total_length = get_matrix_data_ltp(
-            train_org_data)
+        bert_input, edge_index, batch, y_entity, y_sentiment, all_sentiment, total_length = get_entity_tags(
+            train_org_data, catalog, bert_path, ltp_path)
         # 数据转换
         train_data = MyDataSet(bert_input, edge_index, batch, y_entity, y_sentiment, all_sentiment, total_length,
                                True)
         logging.info("训练数据获取完成")
-        logging.info("正在使用ltp获取测试数据:")
+        logging.info("正在使用BIO标注获取测试数据:")
         # 获取测试数据
-        bert_input, edge_index, batch, y_entity, y_sentiment, all_sentiment, total_length = get_matrix_data_ltp(
-            test_org_data)
+        bert_input, edge_index, batch, y_entity, y_sentiment, all_sentiment, total_length = get_entity_tags(
+            test_org_data, catalog, bert_path, ltp_path)
         # 数据转换
         test_data = MyDataSet(bert_input, edge_index, batch, y_entity, y_sentiment, all_sentiment, total_length,
                               False)
-        logging.info("测试数据获取完成")
-
     else:
-        logging.info("正在使用邻接矩阵获取训练数据:")
-        # 获取训练数据
-        (bert_input, edge_index, batch, y_entity,
-         y_sentiment, all_sentiment, emotion_dict, total_length) = get_matrix_data_adjacency(train_org_data)
-        # 数据转换
-        train_data = MyDataSet(bert_input, edge_index, batch, y_entity, y_sentiment, all_sentiment, total_length,
-                               True)
-        logging.info("训练数据获取完成")
-        logging.info("正在使用邻接矩阵获取测试数据:")
-        # 获取测试数据
-        (bert_input, edge_index, batch, y_entity,
-         y_sentiment, all_sentiment, emotion_dict, total_length) = get_matrix_data_adjacency(test_org_data)
-        # 数据转换
-        test_data = MyDataSet(bert_input, edge_index, batch, y_entity, y_sentiment, all_sentiment, total_length,
-                              False)
-        logging.info("测试数据获取完成")
+        if catalog == 'ltp':
+            # 获取训练数据
+            logging.info("正在使用ltp获取训练数据:")
+            bert_input, edge_index, batch, y_entity, y_sentiment, all_sentiment, total_length = get_matrix_data_ltp(
+                train_org_data, bert_path, ltp_path)
+            # 数据转换
+            train_data = MyDataSet(bert_input, edge_index, batch, y_entity, y_sentiment, all_sentiment, total_length,
+                                   True)
+            logging.info("训练数据获取完成")
+            logging.info("正在使用ltp获取测试数据:")
+            # 获取测试数据
+            bert_input, edge_index, batch, y_entity, y_sentiment, all_sentiment, total_length = get_matrix_data_ltp(
+                test_org_data, bert_path, ltp_path)
+            # 数据转换
+            test_data = MyDataSet(bert_input, edge_index, batch, y_entity, y_sentiment, all_sentiment, total_length,
+                                  False)
+            logging.info("测试数据获取完成")
+
+        else:
+            logging.info("正在使用邻接矩阵获取训练数据:")
+            # 获取训练数据
+            (bert_input, edge_index, batch, y_entity,
+             y_sentiment, all_sentiment, emotion_dict, total_length) = get_matrix_data_adjacency(train_org_data,
+                                                                                                 bert_path)
+            # 数据转换
+            train_data = MyDataSet(bert_input, edge_index, batch, y_entity, y_sentiment, all_sentiment, total_length,
+                                   True)
+            logging.info("训练数据获取完成")
+            logging.info("正在使用邻接矩阵获取测试数据:")
+            # 获取测试数据
+            (bert_input, edge_index, batch, y_entity,
+             y_sentiment, all_sentiment, emotion_dict, total_length) = get_matrix_data_adjacency(test_org_data,
+                                                                                                 bert_path)
+            # 数据转换
+            test_data = MyDataSet(bert_input, edge_index, batch, y_entity, y_sentiment, all_sentiment, total_length,
+                                  False)
+            logging.info("测试数据获取完成")
 
     # 构建成dataloader
     train_dataloader = train_data.data_embedding()
     test_dataloader = test_data.data_embedding()
-
     return train_dataloader, test_dataloader
 
 
-def evaluate_model(pred_entity, pred_sentiment, pred_all, true_entity, true_sentiment, true_all):
-    logging.info("评估模型")
+def evaluate_model(pred_sentiment, pred_all, true_sentiment, true_all):
     # 存储信息 用于评估-评估指标包括：准确率, 精确率, 召回率, F1值, 混淆矩阵
-    # 实体列表[TP, FP, FN, TN]
-    # TP: 预测为实体，实际为实体 FP: 预测为实体，实际不是实体  FN: 预测不是实体，实际是实体  TN: 预测不是实体，实际不是实体
-    entity_num = [0, 0, 0, 0]
     # 方面级列表[T2,T1,T0,T-1,T-2,F2,F1,F0,F-1,F-2,P2,P1,P0,P-1,P-2,NN,PN]
     # T2: 预测为2,实际为2 T1: 预测为1,实际为1T0: 预测为0，实际为0 T-1: 预测为-1，实际为-1 T-2: 预测为-2，实际为-2
     # F2: 实际为2,预测不为2 F1: 实际为1，预测不为1 F0: 实际为0，预测不为0 F-1: 实际为-1，预测不为-1 F-2: 实际为-2，预测不为-2
@@ -223,19 +234,6 @@ def evaluate_model(pred_entity, pred_sentiment, pred_all, true_entity, true_sent
     # 总情感列表[TP, FP, FN, TN]
     # TP: 预测为正面，实际为正面 FP: 预测为正面，实际为负面  FN: 预测为负面，实际为正面  TN: 预测为负面，实际为负面
     all_num = [0, 0, 0, 0]
-    # 计算实体的评估指标
-    for i in range(len(pred_entity)):
-        for j in range(len(pred_entity[i])):
-            if pred_entity[i][j] == true_entity[i][j]:
-                if pred_entity[i][j] == 1 or pred_entity[i][j] == 2:
-                    entity_num[0] += 1
-                else:
-                    entity_num[3] += 1
-            else:
-                if pred_entity[i][j] == 1 or pred_entity[i][j] == 2:
-                    entity_num[1] += 1
-                else:
-                    entity_num[2] += 1
     # 计算情感的评估指标
     sentiment_num = [0] * 17
     for i in range(len(pred_sentiment)):
@@ -270,12 +268,43 @@ def evaluate_model(pred_entity, pred_sentiment, pred_all, true_entity, true_sent
                 else:
                     all_num[2] += 1
     logging.info(
-        "实体评估指标:TP:{0},FP:{1},FN:{2},TN:{3}".format(entity_num[0], entity_num[1], entity_num[2], entity_num[3]))
-    logging.info(
-        "情感评估指标:[T2,T1,T0,T-1,T-2,F2,F1,F0,F-1,F-2,P2,P1,P0,P-1,P-2,NN,PN]=" + str(sentiment_num))
+        "情感评估指标:=" + str(sentiment_num))
     logging.info(
         "整体句子情感评估指标:TP:{0},FP:{1},FN:{2},TN:{3}".format(all_num[0], all_num[1], all_num[2], all_num[3]))
-    return entity_num, sentiment_num, all_num
+    return sentiment_num, all_num
+
+
+def eval_entity(pred_entity, true_entity, tags_size):
+    logging.info("评估模型")
+    if tags_size == 3:
+        #  计算评估指标,数据格式T0-20(预测和实际一样的),P0-20(实际为，预测不是)，F0-20(预测是，实际不是)
+        entity_num = [0, 0, 0, 0]
+        # 计算实体的评估指标
+        for i in range(len(pred_entity)):
+            for j in range(len(pred_entity[i])):
+                if pred_entity[i][j] == true_entity[i][j]:
+                    if pred_entity[i][j] == 1 or pred_entity[i][j] == 2:
+                        entity_num[0] += 1
+                    else:
+                        entity_num[3] += 1
+                else:
+                    if pred_entity[i][j] == 1 or pred_entity[i][j] == 2:
+                        entity_num[1] += 1
+                    else:
+                        entity_num[2] += 1
+    else:
+        # 计算评估指标,数据格式T0-tags_size(预测和实际一样的),P0-tags_size(实际为，预测不是)，F0-tags_size(预测是，实际不是)
+        entity_num = [0] * tags_size * 3
+        for i in tqdm(range(len(pred_entity)), desc='Evaluate', ncols=100, total=len(true_entity),
+                      dynamic_ncols=True):
+            for j in range(len(pred_entity[i])):
+                if true_entity[i][j] == pred_entity[i][j]:
+                    entity_num[true_entity[i][j]] += 1
+                else:
+                    entity_num[true_entity[i][j] + tags_size] += 1
+                    entity_num[pred_entity[i][j] + tags_size * 2] += 1
+    logging.info("实体评估指标:{}".format(str(entity_num)))
+    return entity_num
 
 
 if __name__ == '__main__':
@@ -284,36 +313,19 @@ if __name__ == '__main__':
     # 设置日志
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
     # 定义BERT模型
-    bert_model = BertModel.from_pretrained(r'D:\Model\transformers\text-classier\bert_model\bert-base-chinese')
+    bert_model = BertModel.from_pretrained(bert_path)
     logging.info("BERT模型获取完成")
-    # 定义隐藏层维度
-    hidden_dim = 256
-    # 定义超参数
-    num_epochs = 3
-    learning_rate = 3e-5
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # 定义模型的输入维度和输出维度
-    # 实体的种类+1(0表示不是实体)BIO标注
-    tags_size = 3
-    # 实体情感的种类
-    num_sentiment_classes = 5
-    # 整体句子的情感种类
-    all_sentiment_classes = 2
-    p0 = 0.1
-    # 累计梯度步数
-    accumulation_steps = 2
-    # 定义实体情感的loss权重
-    sentiment_loss_weight = [1, 1, 1, 1, 1]
-    # 定义整体句子情感的loss权重
-    all_sentiment_loss_weight = [1, 1]
-    # 定义模型loss权重
-    weights = [[1.5, 0.9, 0.6], [0.9, 1.5, 0.6], [0.6, 0.9, 1.5]]
-    logging.info("超参数定义完成")
-
-    # 数据种类定义 ltp:使用ltp获取边链接关系  adj:使用邻接矩阵获取边链接关系
-    catalog = 'adj'
+    # 确定输出的标签种类
+    if is_bio:
+        # BIO标注
+        with open('./process_data/label_dict.json', 'r', encoding='utf-8') as f:
+            tags_size = len(json.load(f)) * 2 - 1
+            f.close()
+    else:
+        # 实体的种类+1(0表示不是实体)BIO标注
+        tags_size = 3
     # json数据读取
-    train_dataloader, test_dataloader = read_data(catalog)
+    train_dataloader, test_dataloader = read_data(catalog, is_bio, bert_path, ltp_path, train_data_path, test_data_path)
     logging.info("数据读取以及转换完成")
     logging.info("开始训练测试模型：")
     # 训练测试模型
@@ -323,22 +335,25 @@ if __name__ == '__main__':
         model, pred_entity, pred_sentiment, pred_all, true_entity, true_sentiment, true_all = train_test_model(
             train_dataloader, tags_size, num_sentiment_classes, all_sentiment_classes, num_epochs, learning_rate,
             device, weight, p0, accumulation_steps, bert_model, hidden_dim, sentiment_loss_weight,
-            all_sentiment_loss_weight, test_dataloader)
-        data.append({'entity': [pred_entity, true_entity],
-                     'sentiment': [pred_sentiment, true_sentiment], 'all': [pred_all, true_all]})
+            all_sentiment_loss_weight, test_dataloader, model_type)
+        data.append({'model_type': model_type, 'catalog': catalog, 'weight': weight,
+                     'entity': [pred_entity, true_entity], 'sentiment': [pred_sentiment, true_sentiment],
+                     'all': [pred_all, true_all]})
         # 把data保存到文件
-        with open('./result/data.json', 'w') as f:
+        with open('./result/data.json', 'w', encoding='utf-8') as f:
             json.dump(data, f)
             f.close()
-        entity_num, sentiment_num, all_num = evaluate_model(pred_entity, pred_sentiment,
-                                                            pred_all, true_entity, true_sentiment, true_all)
+        # 评估模型
+        entity_num = eval_entity(pred_entity, true_entity, tags_size)
+        sentiment_num, all_num = evaluate_model(pred_sentiment,
+                                                pred_all, true_sentiment, true_all)
 
-        all_results.append({'epoch': num_epochs, 'learning_rate': learning_rate, 'p': p0,
-                            'accumulation_steps': accumulation_steps,
+        all_results.append({'model_type': model_type, 'catalog': catalog, 'epoch': num_epochs,
+                            'learning_rate': learning_rate, 'p': p0,'accumulation_steps': accumulation_steps,
                             'weight': weight, 'entity_num': entity_num, 'sentiment_num': sentiment_num,
                             'all_num': all_num})
         # 保存模型和预测结果
-        with open('./result/all_results.json', 'w') as f:
+        with open('./result/all_results.json', 'w', encoding='utf-8') as f:
             json.dump(all_results, f)
             f.close()
         logging.info(
@@ -352,5 +367,3 @@ if __name__ == '__main__':
                 all_sentiment_loss_weight
             )
         )
-    logging.info("==================训练测试模型完成================================")
-    logging.info("==================保存模型和预测结果================================")

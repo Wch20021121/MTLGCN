@@ -30,15 +30,28 @@
 ### B：借助词典来构造邻接矩阵：
     - 2.1：利用词典来构造邻接矩阵
     - 2.2：利用Bert对邻接矩阵进行编码，得到句子的编码
-### 3：
+
+# 模型构建：
+### A：目录:
+    -LTP_model: 存放LTP模型
+    -process_data: 存放处理预处理的数据
+    -result: 存放结果
+    -process_result: 存放处理结果
+    -DataSets_MTLGCN.py: 用于处理MTLGCN模型的数据集，将它打包成一个个batch
+    -DataProcess.py: 用于处理数据集
+    -MTLGCN.py: 用于写基准模型:bert-bi-lstm-crf,bert-gcn(分类出实体情感和总情感)
+    -bert_bi_lstm_gcn.py: 用于写模型代码：包括GCN模型和多任务学习框架,用于分类出实体，实体情感和总情感
+    -main.py: 用于写训练代码：包括数据预处理、模型构建、模型训练和模型测试，可视化等部分
+    -bert_bi_lstm_gat.py: 用于写模型代码：包括GAT模型和多任务学习框架,用于分类出实体，实体情感和总情感
+
+### B:如何调用：
+    - 1.1：首先需要将数据集放到data文件夹下，处理成train_data.json,val_data.json,test_data.json,每一个
+    个文件中是一个字典，字典的键是句子，值是一个列表，列表[总情感，实体，实体类型，实体情感，实体，实体类型，实体情感----]
+    - 1.2：如果要运行基准模型，
 
 
 # 模型结果归纳：
 ### A：模型的准确率：
-    Accuracy of the network on the entity: 92 %
-    没有预测一个是实体，全部预测是非实体
-    Accuracy of the network on the all: 97 %
-    #### 预测的数据分布
 
   
 
